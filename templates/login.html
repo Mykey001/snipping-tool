@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- Added: Improves clarity for screen readers and mobile devices -->
+    <meta name="description" content="Real-time monitoring and statistics for the Raydium Sniping Bot." />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raydium Sniping Bot Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --success: #22c55e;
+            --warning: #eab308;
+            --error: #ef4444;
+            --background: #f8fafc;
+            --card-bg: #ffffff;
+            --text-primary: #1a1a1a;
+            --text-secondary: #64748b;
+            --border: #e2e8f0;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: var(--background);
+            color: var(--text-primary);
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding: 1rem;
+            background: var(--card-bg);
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .header-right {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--primary);
+            margin: 0.5rem 0;
+        }
+
+        .table-container {
+            overflow-x: auto;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+        }
+
+        .data-table th,
+        .data-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .data-table th {
+            background: #f8fafc;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .status-connected { background: #dcfce7; color: #166534; }
+        .status-disconnected { background: #fee2e2; color: #991b1b; }
+        .status-success { background: #dcfce7; color: #166534; }
+        .status-failed { background: #fee2e2; color: #991b1b; }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            border: none;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .tab {
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .tab.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-top: 1rem;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: var(--card-bg);
+            padding: 2rem;
+            border-radius: 8px;
+            max-width: 500px;
+            width: 90%;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            .header {
+                flex-direction: column;
+                gap: 1rem;
+                text-align: center;
+            }
+            
+            .stat-value {
+                font-size: 1.5rem;
+            }
+        }
+
+        /* Added: Visible focus outline for keyboard accessibility */
+        :focus {
+            outline: 2px dashed var(--primary);
+            outline-offset: 2px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Added: Skip link for screen readers & keyboard users -->
+    <a href="#main-content" style="position:absolute;left:-999px;top:auto;width:1px;height:1px;overflow:hidden;"
+       onfocus="this.style.position='static'; this.style.width='auto'; this.style.height='auto';">
+       Skip to main content
+    </a>
+
+    <div class="container" aria-label="Raydium Sniping Bot Dashboard">
+        <div class="header">
+            <div>
+                <h1>Raydium Sniping Bot Dashboard</h1>
+                <p>Real-time monitoring and statistics</p>
+            </div>
+            <div class="header-right">
+                <div id="connection-status" class="status-badge">Initializing...</div>
+                <button class="btn btn-primary" onclick="showConfig()">Settings</button>
+                <a href="/logout" class="btn btn-primary" aria-label="Logout of the dashboard">Logout</a>
+            </div>
+        </div>
+
+        <div class="dashboard" id="main-content">
+            <div class="card">
+                <h3>Performance Metrics</h3>
+                <div class="stat-value" id="profit-loss">$0.00</div>
+                <p>Total Profit/Loss</p>
+            </div>
+            <div class="card">
+                <h3>Trading Activity</h3>
+                <div class="stat-value" id="success-rate">0%</div>
+                <p>Success Rate</p>
+            </div>
+            <div class="card">
+                <h3>Burn Events Detected</h3>
+                <div class="stat-value" id="burn-events">0</div>
+                <p>Number of LP Burn Events</p>
+            </div>
+            <div class="card">
+                <h3>Swap Statistics</h3>
+                <div class="stat-value" id="swap-stats">0</div>
+                <p>Successful / Failed</p>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active" onclick="showTab('overview')">Overview</div>
+            <div class="tab" onclick="showTab('logs')">Logs</div>
+            <div class="tab" onclick="showTab('chart')">Chart</div>
+        </div>
+
+        <div id="overview" class="card">
+            <div class="card-header">
+                <h3>Bot Overview</h3>
+                <span id="bot-status" class="status-badge status-disconnected">Disconnected</span>
+            </div>
+            <p id="overview-text">Waiting for data...</p>
+        </div>
+
+        <div id="logs" class="card" style="display:none;">
+            <div class="card-header">
+                <h3>Logs</h3>
+            </div>
+            <div class="table-container">
+                <table class="data-table" id="logs-table" aria-label="Recent logs from the sniping bot">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Event</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Logs will populate here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="chart" class="card" style="display:none;">
+            <div class="card-header">
+                <h3>Performance Chart</h3>
+            </div>
+            <div class="chart-container" aria-label="Bot performance chart">
+                <canvas id="performanceChart"></canvas>
+            </div>
+        </div>
+
+        <div class="modal" id="config-modal" aria-hidden="true">
+            <div class="modal-content">
+                <h3>Bot Configuration</h3>
+                <form>
+                    <div class="form-group">
+                        <label for="config-param">Parameter</label>
+                        <input type="text" id="config-param" placeholder="Enter value" />
+                    </div>
+                    <button class="btn btn-primary" onclick="saveConfig()">Save</button>
+                    <!-- Added: Easy action reversal button (Close) -->
+                    <button type="button" class="btn" onclick="closeConfig()" aria-label="Close settings modal">
+                        Close
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Added: A button to quickly scroll back to top -->
+    <button class="btn btn-primary" 
+            style="position: fixed; bottom: 20px; right: 20px; z-index: 999;"
+            onclick="window.scrollTo({top:0, behavior:'smooth'})"
+            aria-label="Scroll to top">
+      ↑ Top
+    </button>
+
+    <script>
+        // Keep existing code, add minimal improvements
+
+        // Tab switching logic
+        function showTab(tabId) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.card').forEach(card => {
+                if(['overview','logs','chart'].includes(card.id)) {
+                    card.style.display = 'none';
+                }
+            });
+            document.getElementById(tabId).style.display = 'block';
+            event.target.classList.add('active');
+        }
+
+        // Modal logic
+        function showConfig() {
+            const modal = document.getElementById('config-modal');
+            modal.style.display = 'flex';
+            modal.setAttribute('aria-hidden', 'false');
+        }
+        function closeConfig() {
+            const modal = document.getElementById('config-modal');
+            modal.style.display = 'none';
+            modal.setAttribute('aria-hidden', 'true');
+        }
+        function saveConfig() {
+            alert('Settings saved!');
+            // Provide feedback to user
+            closeConfig();
+        }
+
+        // Socket or data logic (placeholder)
+        const socket = io.connect();
+        socket.on('connect', () => {
+            document.getElementById('bot-status').textContent = 'Connected';
+            document.getElementById('bot-status').className = 'status-badge status-connected';
+            document.getElementById('connection-status').textContent = 'Connected';
+            document.getElementById('connection-status').className = 'status-badge status-connected';
+        });
+        socket.on('disconnect', () => {
+            document.getElementById('bot-status').textContent = 'Disconnected';
+            document.getElementById('bot-status').className = 'status-badge status-disconnected';
+            document.getElementById('connection-status').textContent = 'Disconnected';
+            document.getElementById('connection-status').className = 'status-badge status-disconnected';
+        });
+
+        // Chart.js initialization (placeholder)
+        const ctx = document.getElementById('performanceChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Performance',
+                    data: [],
+                    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                    borderColor: 'rgba(59, 130, 246, 1)',
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false
+            }
+        });
+    </script>
+</body>
+</html>
