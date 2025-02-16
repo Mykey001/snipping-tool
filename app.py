@@ -224,7 +224,6 @@ if __name__ == '__main__':
     bot_thread.start()
     
     # Run Flask app
-    socketio.run(app, debug=True, port=5000)
 
     if __name__ == '__main__':
         socketio.run(app, debug=True, host='0.0.0.0', port=5000)
