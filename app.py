@@ -222,8 +222,49 @@ if __name__ == '__main__':
     bot_thread = threading.Thread(target=run_bot)
     bot_thread.daemon = True
     bot_thread.start()
+
+
+
+
+
+
+
     
     # Run Flask app
 
     if __name__ == '__main__':
         socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+
+
+
+# Add connection pooling
+from concurrent.futures import ThreadPoolExecutor
+app.config['EXECUTOR'] = ThreadPoolExecutor(max_workers=4)
+
+# Add caching
+from functools import lru_cache
+@lru_cache(maxsize=100)
+def get_cached_pool_data(pool_address):
+    return bot_wrapper.stats['pool_liquidity'].get(pool_address)
+
+# Optimize WebSocket connection
+@socketio.on('connect')
+def handle_connect():
+    session['updates_enabled'] = True
+    
+@socketio.on('disconnect')
+def handle_disconnect():
+    session['updates_enabled'] = False
+
+# Add rate limiting for API endpoints
+from flask_limiter import Limiter
+limiter = Limiter(app)
+
+@app.route('/api/stats')
+@limiter.limit("10/second")
+@login_required
+def get_stats():
+    return jsonify({
+        'stats': bot_wrapper.stats,
+        'metrics': asdict(bot_wrapper.metrics)
+    })

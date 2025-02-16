@@ -1,186 +1,147 @@
-<!-- login.html -->
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Raydium Sniping Bot</title>
-    <style>
-        :root {
-            --primary: #3b82f6;
-            --background: #f8fafc;
-            --card-bg: #ffffff;
-            --text-primary: #1a1a1a;
-            --border: #e2e8f0;
-        }
+import React, { useState, useEffect } from 'react';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { AlertCircle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
-        body {
-            font-family: system-ui, -apple-system, sans-serif;
-            background: var(--background);
-            color: var(--text-primary);
-            line-height: 1.5;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            margin: 0;
-        }
+const Dashboard = () => {
+  const [memeCoinMint, setMemeCoinMint] = useState('');
+  const [stats, setStats] = useState({
+    burnEvents: 0,
+    successfulSwaps: 0,
+    failedSwaps: 0,
+    latestPrice: 0,
+    walletBalance: 0,
+    gasPrice: 0
+  });
+  const [events, setEvents] = useState([]);
+  const [trades, setTrades] = useState([]);
+  const [status, setStatus] = useState('Connected');
 
-        .login-container {
-            background: var(--card-bg);
-            padding: 2rem;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            width: 100%;
-            max-width: 400px;
-            margin: 1rem;
-        }
+  useEffect(() => {
+    const ws = new WebSocket('ws://localhost:5000/ws');
+    
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'stats_update') {
+        setStats(prev => ({
+          ...prev,
+          burnEvents: data.stats.burn_events_detected,
+          successfulSwaps: data.stats.successful_swaps,
+          failedSwaps: data.stats.failed_swaps,
+          walletBalance: data.stats.wallet_balance,
+          gasPrice: data.stats.current_gas_price
+        }));
+        setEvents(data.stats.recent_events);
+        setTrades(data.stats.trades);
+      }
+    };
 
-        .form-group {
-            margin-bottom: 1.5rem;
-        }
+    return () => ws.close();
+  }, []);
 
-        .form-group label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 500;
-        }
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const response = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memeCoinMint })
+      });
+      if (!response.ok) throw new Error('Failed to update config');
+    } catch (error) {
+      console.error('Error:', error);
+    }
+  };
 
-        .form-group input {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            font-size: 1rem;
-        }
+  return (
+    <div className="p-6 max-w-7xl mx-auto space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Configure Meme Coin</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <Input
+                placeholder="Enter Meme Coin Mint Address"
+                value={memeCoinMint}
+                onChange={(e) => setMemeCoinMint(e.target.value)}
+                className="font-mono"
+              />
+              <Button type="submit" className="w-full">
+                Update Configuration
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
 
-        .btn {
-            width: 100%;
-            padding: 0.75rem;
-            background: var(--primary);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            font-size: 1rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-
-        .btn:hover {
-            background: #2563eb;
-        }
-
-        .error-message {
-            background: #fee2e2;
-            color: #991b1b;
-            padding: 0.75rem;
-            border-radius: 4px;
-            margin-bottom: 1rem;
-        }
-
-        @media (max-width: 480px) {
-            .login-container {
-                margin: 1rem;
-                padding: 1.5rem;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="login-container">
-        <h1 style="margin-bottom: 2rem; text-align: center;">Login</h1>
-        
-        {% if error %}
-        <div class="error-message">
-            {{ error }}
-        </div>
-        {% endif %}
-
-        <form method="POST" action="{{ url_for('login') }}">
-            <div class="form-group">
-                <label for="username">Username</label>
-                <input type="text" id="username" name="username" required autocomplete="username">
+        <Card>
+          <CardHeader>
+            <CardTitle>Real-time Stats</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <p className="text-sm text-gray-500">Burn Events</p>
+                <p className="text-2xl font-bold">{stats.burnEvents}</p>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm text-gray-500">Success Rate</p>
+                <p className="text-2xl font-bold">
+                  {((stats.successfulSwaps / (stats.successfulSwaps + stats.failedSwaps)) * 100).toFixed(1)}%
+                </p>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm text-gray-500">Wallet Balance</p>
+                <p className="text-2xl font-bold">{stats.walletBalance.toFixed(4)} SOL</p>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm text-gray-500">Gas Price</p>
+                <p className="text-2xl font-bold">{stats.gasPrice} GWEI</p>
+              </div>
             </div>
-            <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password" required autocomplete="current-password">
-            </div>
-            <button type="submit" class="btn">Login</button>
-        </form>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Price Chart</CardTitle>
+        </CardHeader>
+        <CardContent className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={trades}>
+              <XAxis dataKey="timestamp" />
+              <YAxis />
+              <Tooltip />
+              <Line type="monotone" dataKey="price" stroke="#3b82f6" />
+            </LineChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Recent Events</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            {events.map((event, index) => (
+              <Alert key={index}>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  {new Date(event.timestamp).toLocaleTimeString()} - {event.event}
+                </AlertDescription>
+              </Alert>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
     </div>
-</body>
-</html>
+  );
+};
 
-<!-- Add this script section to your existing index.html before the closing body tag -->
-<script>
-    // Socket event handling
-    socket.on('stats_update', function(data) {
-        // Update metrics
-        document.getElementById('profit-loss').textContent = 
-            `$${data.metrics.total_profit_loss.toFixed(2)}`;
-        document.getElementById('success-rate').textContent = 
-            `${data.metrics.success_rate.toFixed(1)}%`;
-        document.getElementById('burn-events').textContent = 
-            data.stats.burn_events_detected;
-        document.getElementById('swap-stats').textContent = 
-            `${data.stats.successful_swaps} / ${data.stats.failed_swaps}`;
-        
-        // Update overview
-        document.getElementById('overview-text').textContent = 
-            `Wallet Balance: ${data.stats.wallet_balance.toFixed(4)} SOL | ` +
-            `Gas Price: ${data.stats.current_gas_price} GWEI`;
-        
-        // Update logs table
-        const logsTable = document.getElementById('logs-table').getElementsByTagName('tbody')[0];
-        data.stats.recent_events.forEach(event => {
-            const row = logsTable.insertRow(0);
-            const timeCell = row.insertCell(0);
-            const eventCell = row.insertCell(1);
-            
-            timeCell.textContent = moment(event.timestamp).format('HH:mm:ss');
-            eventCell.textContent = JSON.stringify(event.event);
-        });
-        
-        // Keep only last 20 rows
-        while (logsTable.rows.length > 20) {
-            logsTable.deleteRow(logsTable.rows.length - 1);
-        }
-        
-        // Update chart
-        const chart = Chart.getChart('performanceChart');
-        if (chart && data.stats.trades.length > 0) {
-            const trades = data.stats.trades.slice().reverse();
-            chart.data.labels = trades.map(trade => 
-                moment(trade.timestamp).format('HH:mm:ss')
-            );
-            chart.data.datasets[0].data = trades.map(trade => 
-                trade.price
-            );
-            chart.update();
-        }
-    });
-
-    // Add keyboard support for modal
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') {
-            closeConfig();
-        }
-    });
-
-    // Close modal when clicking outside
-    document.getElementById('config-modal').addEventListener('click', function(e) {
-        if (e.target === this) {
-            closeConfig();
-        }
-    });
-
-    // Improve accessibility for status updates
-    const originalTitle = document.title;
-    socket.on('connect', () => {
-        document.title = 'Connected - ' + originalTitle;
-    });
-    socket.on('disconnect', () => {
-        document.title = 'Disconnected - ' + originalTitle;
-    });
-</script>
+export default Dashboard;
