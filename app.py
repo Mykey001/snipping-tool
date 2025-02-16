@@ -268,3 +268,18 @@ def get_stats():
         'stats': bot_wrapper.stats,
         'metrics': asdict(bot_wrapper.metrics)
     })
+
+
+@socketio.on_error_default
+def default_error_handler(e):
+    logger.error(f'SocketIO error: {str(e)}')
+    return False
+
+@socketio.on('connect')
+def handle_connect():
+    logger.info(f'Client connected: {request.sid}')
+    emit('connection_status', {'status': 'connected'})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    logger.info(f'Client disconnected: {request.sid}')

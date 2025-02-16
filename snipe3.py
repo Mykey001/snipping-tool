@@ -26,12 +26,6 @@ from rich.table import Table
 from rich.live import Live
 from collections import deque
 
-
-        # Add memory-efficient event processing
-from collections import deque
-from asyncio import Queue, PriorityQueue
-
-
 # Initialize Rich console
 console = Console()
 
@@ -165,29 +159,6 @@ class SnipingBot:
         self.session = None
         self.pool_cache = {}
         self.stats = BotStats()
-
-
-
-    def __init__(self):
-        self.event_queue = PriorityQueue()
-        self.recent_events = deque(maxlen=100)
-        self.burn_cache = {}
-        
-    async def process_events(self):
-        while True:
-            priority, event = await self.event_queue.get()
-            if event['type'] == 'burn':
-                await self.handle_burn_event(event)
-            self.event_queue.task_done()
-            
-    async def handle_burn_event(self, event):
-        # Add event batching
-        if len(self.burn_cache) >= 10:
-            await self.process_burn_batch(self.burn_cache)
-            self.burn_cache.clear()
-        self.burn_cache[event['signature']] = event
-
-
 
     async def initialize(self):
         """Initialize the bot"""
@@ -334,3 +305,22 @@ if __name__ == "__main__":
 from collections import deque
 from asyncio import Queue, PriorityQueue
 
+class SnipingBot:
+    def __init__(self):
+        self.event_queue = PriorityQueue()
+        self.recent_events = deque(maxlen=100)
+        self.burn_cache = {}
+        
+    async def process_events(self):
+        while True:
+            priority, event = await self.event_queue.get()
+            if event['type'] == 'burn':
+                await self.handle_burn_event(event)
+            self.event_queue.task_done()
+            
+    async def handle_burn_event(self, event):
+        # Add event batching
+        if len(self.burn_cache) >= 10:
+            await self.process_burn_batch(self.burn_cache)
+            self.burn_cache.clear()
+        self.burn_cache[event['signature']] = event
