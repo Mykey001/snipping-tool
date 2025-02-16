@@ -4,12 +4,13 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 from werkzeug.security import generate_password_hash, check_password_hash
 import asyncio
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 import os
 from functools import wraps
 from dataclasses import dataclass, asdict
 import json
+from snipe3 import SnipingBot, Config
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', os.urandom(24))
@@ -21,24 +22,6 @@ login_manager.login_view = 'login'
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-@dataclass
-class Trade:
-    timestamp: str
-    token_address: str
-    amount_in: float
-    amount_out: float
-    price: float
-    transaction_hash: str
-    status: str
-
-@dataclass
-class BotMetrics:
-    total_profit_loss: float
-    success_rate: float
-    average_response_time: float
-    gas_spent: float
-    total_trades: int
 
 class User(UserMixin):
     def __init__(self, id, username, password_hash):
@@ -61,74 +44,19 @@ class FlaskBotWrapper:
             'start_time': datetime.now().isoformat(),
             'last_block_time': None,
             'recent_events': [],
-            'trades': [],
             'wallet_balance': 0.0,
             'current_gas_price': 0,
-            'pool_liquidity': {},
-            'profit_loss': 0.0
         }
-        self.metrics = BotMetrics(
-            total_profit_loss=0.0,
-            success_rate=0.0,
-            average_response_time=0.0,
-            gas_spent=0.0,
-            total_trades=0
-        )
         
     def update_stats(self, event_type, data):
-        self.stats['last_block_time'] = datetime.now().isoformat()
-        
-        if event_type == 'burn_event':
-            self.stats['burn_events_detected'] += 1
-        elif event_type == 'successful_swap':
-            self.stats['successful_swaps'] += 1
-            self._add_trade(data, 'success')
-        elif event_type == 'failed_swap':
-            self.stats['failed_swaps'] += 1
-            self._add_trade(data, 'failed')
+        if event_type == 'stats_update':
+            self.stats.update(data)
         elif event_type == 'wallet_update':
             self.stats['wallet_balance'] = data
         elif event_type == 'gas_update':
             self.stats['current_gas_price'] = data
-        elif event_type == 'pool_update':
-            self.stats['pool_liquidity'].update(data)
             
-        self._add_event(data)
-        self._update_metrics()
-        self._emit_updates()
-    
-    def _add_trade(self, trade_data, status):
-        trade = Trade(
-            timestamp=datetime.now().isoformat(),
-            token_address=trade_data.get('token_address'),
-            amount_in=trade_data.get('amount_in', 0),
-            amount_out=trade_data.get('amount_out', 0),
-            price=trade_data.get('price', 0),
-            transaction_hash=trade_data.get('tx_hash'),
-            status=status
-        )
-        self.stats['trades'].insert(0, asdict(trade))
-        self.stats['trades'] = self.stats['trades'][:100]  # Keep last 100 trades
-        
-    def _add_event(self, data):
-        event = {
-            'timestamp': datetime.now().isoformat(),
-            'event': data
-        }
-        self.stats['recent_events'].insert(0, event)
-        self.stats['recent_events'] = self.stats['recent_events'][:20]
-        
-    def _update_metrics(self):
-        total_trades = self.stats['successful_swaps'] + self.stats['failed_swaps']
-        if total_trades > 0:
-            self.metrics.success_rate = (self.stats['successful_swaps'] / total_trades) * 100
-        self.metrics.total_trades = total_trades
-        
-    def _emit_updates(self):
-        socketio.emit('stats_update', {
-            'stats': self.stats,
-            'metrics': asdict(self.metrics)
-        })
+        socketio.emit('stats_update', {'stats': self.stats})
 
 # Initialize bot wrapper
 bot_wrapper = FlaskBotWrapper()
@@ -169,25 +97,24 @@ def index():
 @app.route('/api/stats')
 @login_required
 def get_stats():
-    return jsonify({
-        'stats': bot_wrapper.stats,
-        'metrics': asdict(bot_wrapper.metrics)
-    })
-
-@app.route('/api/trades')
-@login_required
-def get_trades():
-    return jsonify(bot_wrapper.stats['trades'])
+    return jsonify({'stats': bot_wrapper.stats})
 
 @app.route('/api/config', methods=['GET', 'POST'])
 @login_required
 def bot_config():
     if request.method == 'POST':
-        config = request.get_json()
-        # Update bot configuration
-        return jsonify({'status': 'success'})
+        data = request.get_json()
+        if 'memeCoinMint' in data:
+            try:
+                # Update meme coin mint in Config
+                Config.MEME_COIN_MINT = data['memeCoinMint']
+                return jsonify({'status': 'success'})
+            except Exception as e:
+                return jsonify({'status': 'error', 'message': str(e)}), 400
+    
     return jsonify({
         'rpc_urls': Config.RPC_URLS,
+        'meme_coin_mint': str(Config.MEME_COIN_MINT),
         'max_slippage': Config.SLIPPAGE,
         'priority_fee': Config.PRIORITY_FEE
     })
@@ -196,7 +123,6 @@ def run_bot():
     """Run the original bot logic in a separate thread"""
     async def bot_main():
         try:
-            from snipe3 import SnipingBot
             bot = SnipingBot()
             await bot.initialize()
             
@@ -207,79 +133,30 @@ def run_bot():
             
             await asyncio.gather(
                 bot.monitor_lp_burns(),
-                bot.display_status(),
                 bot.monitor_wallet_balance(),
                 bot.monitor_gas_prices()
             )
         except Exception as e:
             logger.error(f"Bot error: {str(e)}")
             bot_wrapper.update_stats('error', str(e))
+            # Add retry logic
+            await asyncio.sleep(5)
+            return await bot_main()
     
-    asyncio.run(bot_main())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(bot_main())
+    except Exception as e:
+        logger.error(f"Fatal bot error: {str(e)}")
+    finally:
+        loop.close()
 
 if __name__ == '__main__':
     # Start bot in a separate thread
     bot_thread = threading.Thread(target=run_bot)
     bot_thread.daemon = True
     bot_thread.start()
-
-
-
-
-
-
-
     
     # Run Flask app
-
-    if __name__ == '__main__':
-        socketio.run(app, debug=True, host='0.0.0.0', port=5000)
-
-
-
-# Add connection pooling
-from concurrent.futures import ThreadPoolExecutor
-app.config['EXECUTOR'] = ThreadPoolExecutor(max_workers=4)
-
-# Add caching
-from functools import lru_cache
-@lru_cache(maxsize=100)
-def get_cached_pool_data(pool_address):
-    return bot_wrapper.stats['pool_liquidity'].get(pool_address)
-
-# Optimize WebSocket connection
-@socketio.on('connect')
-def handle_connect():
-    session['updates_enabled'] = True
-    
-@socketio.on('disconnect')
-def handle_disconnect():
-    session['updates_enabled'] = False
-
-# Add rate limiting for API endpoints
-from flask_limiter import Limiter
-limiter = Limiter(app)
-
-@app.route('/api/stats')
-@limiter.limit("10/second")
-@login_required
-def get_stats():
-    return jsonify({
-        'stats': bot_wrapper.stats,
-        'metrics': asdict(bot_wrapper.metrics)
-    })
-
-
-@socketio.on_error_default
-def default_error_handler(e):
-    logger.error(f'SocketIO error: {str(e)}')
-    return False
-
-@socketio.on('connect')
-def handle_connect():
-    logger.info(f'Client connected: {request.sid}')
-    emit('connection_status', {'status': 'connected'})
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    logger.info(f'Client disconnected: {request.sid}')
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
