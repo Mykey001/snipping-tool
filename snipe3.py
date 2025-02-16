@@ -8,6 +8,7 @@ from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solders.pubkey import Pubkey
 from solders.keypair import Keypair
+from solana.keypair import Keypair
 from anchorpy import Program, Provider, Wallet, Idl
 import os
 import base58
@@ -116,7 +117,7 @@ class SnipingBot:
         self.event_queue = asyncio.Queue()
         self.burn_cache = {}
         self.on_event: Optional[Callable] = None
-
+        self.keypair = None
     async def initialize(self):
         """Initialize the bot"""
         try:
@@ -128,6 +129,24 @@ class SnipingBot:
         except Exception as e:
             logger.error(f"Failed to initialize bot: {str(e)}")
             raise
+
+        #(1) Get the base58-encoded secret key (64 bytes, not just 32!)
+        base58_secret = os.getenv("WALLET_SECRET_KEY")
+        if not base58_secret:
+            raise ValueError("WALLET_SECRET_KEY environment variable not set")
+
+        # 2) Decode from base58 into raw bytes
+        secret_key_bytes = base58.b58decode(base58_secret)
+
+        # 3) Check we got 64 bytes
+        if len(secret_key_bytes) != 64:
+            raise ValueError(
+                f"Expected 64 bytes for secret key, got {len(secret_key_bytes)}"
+            )
+
+        # 4) Create the Solana Keypair
+        self.keypair = Keypair.from_secret_key(secret_key_bytes)
+        logger.info("Successfully loaded 64-byte Solana keypair.")
 
     async def monitor_lp_burns(self):
         """Monitor LP burn events"""
