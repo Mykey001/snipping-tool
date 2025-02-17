@@ -100,7 +100,7 @@ class RaydiumClient:
         idl = Idl.from_json(json.dumps(RAYDIUM_IDL))
         self.program = Program(idl, Config.RAYDIUM_AMM_PROGRAM_ID, provider)
         logger.info("Raydium AMM program initialized successfully.")
-
+        
         await self.client.get_latest_blockhash()
         return True
         
