@@ -86,26 +86,26 @@ class RaydiumClient:
 
     async def initialize(self):
         """Initialize Raydium AMM program."""
-    try:
-        logger.info("Initializing Raydium AMM program...")
+        try:
+            logger.info("Initializing Raydium AMM program...")
 
-        # Use Config.get_wallet() correctly
-        keypair = Config.get_wallet()
-        self.wallet = Wallet(keypair)
-        provider = Provider(self.clients[0], self.wallet)
+            keypair = Config.get_wallet()
+            self.wallet = Wallet(keypair)
+            provider = Provider(self.clients[0], self.wallet)
 
-        if not RAYDIUM_IDL:
-            raise ValueError("RAYDIUM_IDL is not defined. Please provide the actual IDL.")
+            if not RAYDIUM_IDL:
+                raise ValueError("RAYDIUM_IDL is not defined. Please provide the actual IDL.")
 
-        idl = Idl.from_json(json.dumps(RAYDIUM_IDL))
-        self.program = Program(idl, Config.RAYDIUM_AMM_PROGRAM_ID, provider)
-        logger.info("Raydium AMM program initialized successfully.")
-        
-        await self.client.get_latest_blockhash()
-        return True
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize Raydium client: {str(e)}")
+            idl = Idl.from_json(json.dumps(RAYDIUM_IDL))
+            self.program = Program(idl, Config.RAYDIUM_AMM_PROGRAM_ID, provider)
+            logger.info("Raydium AMM program initialized successfully.")
+
+            # Example call to verify we can use the client
+            await self.client.get_latest_blockhash()
+
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize Raydium client: {str(e)}")
         raise
 
     @property
