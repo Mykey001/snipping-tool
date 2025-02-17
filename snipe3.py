@@ -47,22 +47,22 @@ class Config:
     SLIPPAGE = 0.05
     MAX_LATENCY = 0.5
 
-@staticmethod
-def get_wallet() -> Keypair:
-    try:
-        key_str = os.getenv("WALLET_PRIVATE_KEY")
-        if not key_str:
-            raise ValueError("WALLET_PRIVATE_KEY not found in environment variables")
+    @staticmethod
+    def get_wallet() -> Keypair:
+        try:
+            key_str = os.getenv("WALLET_PRIVATE_KEY")
+            if not key_str:
+                raise ValueError("WALLET_PRIVATE_KEY not found in environment variables")
         
-        secret = base58.b58decode(key_str)
-        if len(secret) != 64:
-            raise ValueError(f"Expected 64 bytes for secret key, got {len(secret)}")
+            secret = base58.b58decode(key_str)
+            if len(secret) != 64:
+                raise ValueError(f"Expected 64 bytes for secret key, got {len(secret)}")
 
         # Use from_bytes(...) instead of from_secret_key(...)
-        return Keypair.from_bytes(secret)
-    except Exception as e:
-        logger.error(f"Error creating wallet: {str(e)}")
-        raise
+            return Keypair.from_bytes(secret)
+        except Exception as e:
+            logger.error(f"Error creating wallet: {str(e)}")
+            raise
 
 
 class RaydiumClient:
@@ -86,30 +86,27 @@ class RaydiumClient:
 
     async def initialize(self):
         """Initialize Raydium AMM program."""
-        try:
-            logger.info("Initializing Raydium AMM program...")
+    try:
+        logger.info("Initializing Raydium AMM program...")
 
-            # FIX: Use assignment instead of subtraction
-            keypair = get_wallet()
-            self.wallet = Wallet(keypair)
-            provider = Provider(self.clients[0], self.wallet)
+        # Use Config.get_wallet() correctly
+        keypair = Config.get_wallet()
+        self.wallet = Wallet(keypair)
+        provider = Provider(self.clients[0], self.wallet)
 
-            if not RAYDIUM_IDL:
-                raise ValueError("RAYDIUM_IDL is not defined. Please provide the actual IDL.")
+        if not RAYDIUM_IDL:
+            raise ValueError("RAYDIUM_IDL is not defined. Please provide the actual IDL.")
 
-            # Load the IDL and create the Program instance
-            idl = Idl.from_json(json.dumps(RAYDIUM_IDL))
-            self.program = Program(idl, Config.RAYDIUM_AMM_PROGRAM_ID, provider)
-            logger.info("Raydium AMM program initialized successfully.")
+        idl = Idl.from_json(json.dumps(RAYDIUM_IDL))
+        self.program = Program(idl, Config.RAYDIUM_AMM_PROGRAM_ID, provider)
+        logger.info("Raydium AMM program initialized successfully.")
 
-            # Example call to verify we can use the client
-            await self.client.get_latest_blockhash()
-
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize Raydium client: {str(e)}")
-            raise
+        await self.client.get_latest_blockhash()
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize Raydium client: {str(e)}")
+        raise
 
     @property
     def client(self) -> AsyncClient:
@@ -203,27 +200,23 @@ class SnipingBot:
             except Exception as e:
                 logger.error(f"Error monitoring wallet balance: {str(e)}")
             await asyncio.sleep(5)
+class SnipingBot:
+    # ... other methods ...
 
-async def monitor_gas_prices(self):
-    while True:
-        try:
-            # 1) Fetch the current fee rate governor
-            fee_gov_resp = await self.raydium.client.get_fee_rate_governor()
-            
-            # 2) The lamports_per_signature is in the response
-            lamports_per_sig = fee_gov_resp.value.fee_rate_governor.lamports_per_signature
-            
-            # 3) Store in your stats
-            self.stats.current_gas_price = lamports_per_sig
+    async def monitor_gas_prices(self):
+        """Monitor gas prices"""
+        while True:
+            try:
+                recent_blockhash = await self.raydium.client.get_recent_blockhash()
+                if hasattr(self, 'stats'):
+                    self.stats.current_gas_price = recent_blockhash.value.fee_calculator.lamports_per_signature
+                    if self.on_event:
+                        self.on_event('gas_update', self.stats.current_gas_price)
+            except Exception as e:
+                logger.error(f"Error monitoring gas prices: {str(e)}")
+            await asyncio.sleep(5)
 
-            if self.on_event:
-                self.on_event('gas_update', self.stats.current_gas_price)
-        except Exception as e:
-            logger.error(f"Error monitoring gas prices: {str(e)}")
-        await asyncio.sleep(5)
-
-
-async def process_log_message(self, msg):
+    async def process_log_message(self, msg):
         """Process incoming log messages from logsSubscribe."""
         try:
             if "params" in msg and "result" in msg["params"]:
@@ -242,7 +235,7 @@ async def process_log_message(self, msg):
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}")
 
-async def verify_burn_event(self, signature: str):
+    async def verify_burn_event(self, signature: str):
         """Verify a burn event by fetching the transaction."""
         try:
             tx = await self.raydium.client.get_transaction(
@@ -254,7 +247,7 @@ async def verify_burn_event(self, signature: str):
         except Exception as e:
             logger.error(f"Error verifying burn: {str(e)}")
 
-async def cleanup(self):
+    async def cleanup(self):
         """Cleanup resources."""
         if self.session:
             await self.session.close()
