@@ -8,7 +8,6 @@ from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solders.pubkey import Pubkey
 from solders.keypair import Keypair
-from solana.keypair import Keypair
 from anchorpy import Program, Provider, Wallet, Idl
 import os
 import base58
@@ -23,6 +22,15 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
+
+# -------------------------------------------------------------------
+# Placeholder Raydium IDL (Replace with the actual IDL JSON contents)
+# -------------------------------------------------------------------
+RAYDIUM_IDL = {
+    "version": "0.0.0",
+    "name": "raydium",
+    "instructions": []
+}
 
 @dataclass
 class Config:
@@ -39,18 +47,23 @@ class Config:
     SLIPPAGE = 0.05
     MAX_LATENCY = 0.5
 
-    @staticmethod
-    def get_wallet() -> Keypair:
-        try:
-            key_str = os.getenv("WALLET_PRIVATE_KEY")
-            if not key_str:
-                raise ValueError("WALLET_PRIVATE_KEY not found in environment variables")
-            
-            secret = base58.b58decode(key_str)
-            return Keypair.from_bytes(secret[:32])
-        except Exception as e:
-            logger.error(f"Error creating wallet: {str(e)}")
-            raise
+@staticmethod
+def get_wallet() -> Keypair:
+    try:
+        key_str = os.getenv("WALLET_PRIVATE_KEY")
+        if not key_str:
+            raise ValueError("WALLET_PRIVATE_KEY not found in environment variables")
+        
+        secret = base58.b58decode(key_str)
+        if len(secret) != 64:
+            raise ValueError(f"Expected 64 bytes for secret key, got {len(secret)}")
+
+        # Use from_bytes(...) instead of from_secret_key(...)
+        return Keypair.from_bytes(secret)
+    except Exception as e:
+        logger.error(f"Error creating wallet: {str(e)}")
+        raise
+
 
 class RaydiumClient:
     def __init__(self):
@@ -67,21 +80,31 @@ class RaydiumClient:
             raise RuntimeError("No RPC clients could be initialized")
             
         self.current_client = 0
-        self.program = None
-        self.wallet = None
+        self.program: Optional[Program] = None
+        self.on_event = None
+        self.wallet: Optional[Wallet] = None
 
     async def initialize(self):
-        """Initialize Raydium AMM program"""
+        """Initialize Raydium AMM program."""
         try:
             logger.info("Initializing Raydium AMM program...")
-            self.wallet = Wallet(Config.get_wallet())
+
+            # FIX: Use assignment instead of subtraction
+            keypair = get_wallet()
+            self.wallet = Wallet(keypair)
             provider = Provider(self.clients[0], self.wallet)
-            
+
+            if not RAYDIUM_IDL:
+                raise ValueError("RAYDIUM_IDL is not defined. Please provide the actual IDL.")
+
+            # Load the IDL and create the Program instance
             idl = Idl.from_json(json.dumps(RAYDIUM_IDL))
             self.program = Program(idl, Config.RAYDIUM_AMM_PROGRAM_ID, provider)
-            logger.info("Raydium AMM program initialized successfully")
-            
+            logger.info("Raydium AMM program initialized successfully.")
+
+            # Example call to verify we can use the client
             await self.client.get_latest_blockhash()
+
             return True
             
         except Exception as e:
@@ -90,6 +113,7 @@ class RaydiumClient:
 
     @property
     def client(self) -> AsyncClient:
+        """Returns the current active AsyncClient."""
         return self.clients[self.current_client]
 
 class BotStats:
@@ -111,15 +135,16 @@ class BotStats:
 class SnipingBot:
     def __init__(self):
         self.raydium = RaydiumClient()
-        self.session = None
+        self.session: Optional[aiohttp.ClientSession] = None
         self.pool_cache = {}
         self.stats = BotStats()
         self.event_queue = asyncio.Queue()
         self.burn_cache = {}
         self.on_event: Optional[Callable] = None
-        self.keypair = None
+        self.keypair: Optional[Keypair] = None
+
     async def initialize(self):
-        """Initialize the bot"""
+        """Initialize the bot."""
         try:
             await self.raydium.initialize()
             self.session = aiohttp.ClientSession()
@@ -130,26 +155,8 @@ class SnipingBot:
             logger.error(f"Failed to initialize bot: {str(e)}")
             raise
 
-        #(1) Get the base58-encoded secret key (64 bytes, not just 32!)
-        base58_secret = os.getenv("WALLET_SECRET_KEY")
-        if not base58_secret:
-            raise ValueError("WALLET_SECRET_KEY environment variable not set")
-
-        # 2) Decode from base58 into raw bytes
-        secret_key_bytes = base58.b58decode(base58_secret)
-
-        # 3) Check we got 64 bytes
-        if len(secret_key_bytes) != 64:
-            raise ValueError(
-                f"Expected 64 bytes for secret key, got {len(secret_key_bytes)}"
-            )
-
-        # 4) Create the Solana Keypair
-        self.keypair = Keypair.from_secret_key(secret_key_bytes)
-        logger.info("Successfully loaded 64-byte Solana keypair.")
-
     async def monitor_lp_burns(self):
-        """Monitor LP burn events"""
+        """Monitor LP burn events via logsSubscribe."""
         retry_count = 0
         self.stats.connection_status = "Connected"
         
@@ -178,14 +185,17 @@ class SnipingBot:
                             
             except Exception as e:
                 retry_count += 1
-                self.stats.connection_status = f"Reconnecting ({retry_count}/{Config.MAX_RETRIES})"
+                self.stats.connection_status = (
+                    f"Reconnecting ({retry_count}/{Config.MAX_RETRIES})"
+                )
                 self.stats.add_event(f"Connection error: {str(e)}")
                 await asyncio.sleep(2 ** retry_count)
 
     async def monitor_wallet_balance(self):
-        """Monitor wallet balance"""
+        """Monitor wallet balance."""
         while True:
             try:
+                # self.raydium.wallet is an anchorpy.Wallet, so .public_key is correct
                 response = await self.raydium.client.get_balance(self.raydium.wallet.public_key)
                 self.stats.wallet_balance = response.value / 1e9  # Convert lamports to SOL
                 if self.on_event:
@@ -194,20 +204,27 @@ class SnipingBot:
                 logger.error(f"Error monitoring wallet balance: {str(e)}")
             await asyncio.sleep(5)
 
-    async def monitor_gas_prices(self):
-        """Monitor gas prices"""
-        while True:
-            try:
-                recent_blockhash = await self.raydium.client.get_recent_blockhash()
-                self.stats.current_gas_price = recent_blockhash.value.fee_calculator.lamports_per_signature
-                if self.on_event:
-                    self.on_event('gas_update', self.stats.current_gas_price)
-            except Exception as e:
-                logger.error(f"Error monitoring gas prices: {str(e)}")
-            await asyncio.sleep(5)
+async def monitor_gas_prices(self):
+    while True:
+        try:
+            # 1) Fetch the current fee rate governor
+            fee_gov_resp = await self.raydium.client.get_fee_rate_governor()
+            
+            # 2) The lamports_per_signature is in the response
+            lamports_per_sig = fee_gov_resp.value.fee_rate_governor.lamports_per_signature
+            
+            # 3) Store in your stats
+            self.stats.current_gas_price = lamports_per_sig
 
-    async def process_log_message(self, msg):
-        """Process incoming log messages"""
+            if self.on_event:
+                self.on_event('gas_update', self.stats.current_gas_price)
+        except Exception as e:
+            logger.error(f"Error monitoring gas prices: {str(e)}")
+        await asyncio.sleep(5)
+
+
+async def process_log_message(self, msg):
+        """Process incoming log messages from logsSubscribe."""
         try:
             if "params" in msg and "result" in msg["params"]:
                 result = msg["params"].get("result", {})
@@ -225,8 +242,8 @@ class SnipingBot:
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}")
 
-    async def verify_burn_event(self, signature: str):
-        """Verify a burn event"""
+async def verify_burn_event(self, signature: str):
+        """Verify a burn event by fetching the transaction."""
         try:
             tx = await self.raydium.client.get_transaction(
                 signature,
@@ -237,8 +254,8 @@ class SnipingBot:
         except Exception as e:
             logger.error(f"Error verifying burn: {str(e)}")
 
-    async def cleanup(self):
-        """Cleanup resources"""
+async def cleanup(self):
+        """Cleanup resources."""
         if self.session:
             await self.session.close()
         for client in self.raydium.clients:
