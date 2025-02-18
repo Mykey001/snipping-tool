@@ -23,9 +23,6 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# -------------------------------------------------------------------
-# Placeholder Raydium IDL (Replace with the actual IDL JSON contents)
-# -------------------------------------------------------------------
 RAYDIUM_IDL = {
     "version": "0.0.0",
     "name": "raydium",
@@ -58,12 +55,10 @@ class Config:
             if len(secret) != 64:
                 raise ValueError(f"Expected 64 bytes for secret key, got {len(secret)}")
 
-        # Use from_bytes(...) instead of from_secret_key(...)
             return Keypair.from_bytes(secret)
         except Exception as e:
             logger.error(f"Error creating wallet: {str(e)}")
             raise
-
 
 class RaydiumClient:
     def __init__(self):
@@ -93,20 +88,17 @@ class RaydiumClient:
             self.wallet = Wallet(keypair)
             provider = Provider(self.clients[0], self.wallet)
 
-            if not RAYDIUM_IDL:
-                raise ValueError("RAYDIUM_IDL is not defined. Please provide the actual IDL.")
-
             idl = Idl.from_json(json.dumps(RAYDIUM_IDL))
             self.program = Program(idl, Config.RAYDIUM_AMM_PROGRAM_ID, provider)
             logger.info("Raydium AMM program initialized successfully.")
 
-            # Example call to verify we can use the client
-            await self.client.get_latest_blockhash()
+            # Use get_latest_blockhash RPC method instead
+            await self.client.get_latest_blockhash(Confirmed)
 
             return True
         except Exception as e:
             logger.error(f"Failed to initialize Raydium client: {str(e)}")
-        raise
+            raise
 
     @property
     def client(self) -> AsyncClient:
@@ -141,7 +133,6 @@ class SnipingBot:
         self.keypair: Optional[Keypair] = None
 
     async def initialize(self):
-        """Initialize the bot."""
         try:
             await self.raydium.initialize()
             self.session = aiohttp.ClientSession()
@@ -153,7 +144,6 @@ class SnipingBot:
             raise
 
     async def monitor_lp_burns(self):
-        """Monitor LP burn events via logsSubscribe."""
         retry_count = 0
         self.stats.connection_status = "Connected"
         
@@ -178,46 +168,40 @@ class SnipingBot:
                             self.stats.last_block_time = datetime.datetime.now()
                             await self.process_log_message(data)
                             if self.on_event:
-                                self.on_event('stats_update', self.stats.__dict__)
+                                await self.on_event('stats_update', self.stats.__dict__)
                             
             except Exception as e:
                 retry_count += 1
-                self.stats.connection_status = (
-                    f"Reconnecting ({retry_count}/{Config.MAX_RETRIES})"
-                )
+                self.stats.connection_status = f"Reconnecting ({retry_count}/{Config.MAX_RETRIES})"
                 self.stats.add_event(f"Connection error: {str(e)}")
                 await asyncio.sleep(2 ** retry_count)
 
     async def monitor_wallet_balance(self):
-        """Monitor wallet balance."""
         while True:
             try:
-                # self.raydium.wallet is an anchorpy.Wallet, so .public_key is correct
                 response = await self.raydium.client.get_balance(self.raydium.wallet.public_key)
-                self.stats.wallet_balance = response.value / 1e9  # Convert lamports to SOL
+                self.stats.wallet_balance = response.value / 1e9
                 if self.on_event:
-                    self.on_event('wallet_update', self.stats.wallet_balance)
+                    await self.on_event('wallet_update', self.stats.wallet_balance)
             except Exception as e:
                 logger.error(f"Error monitoring wallet balance: {str(e)}")
             await asyncio.sleep(5)
-class SnipingBot:
-    # ... other methods ...
 
     async def monitor_gas_prices(self):
-        """Monitor gas prices"""
         while True:
             try:
-                recent_blockhash = await self.raydium.client.get_recent_blockhash()
+                # Use get_latest_blockhash with proper RPC method
+                recent_blockhash = await self.raydium.client.get_latest_blockhash(Confirmed)
                 if hasattr(self, 'stats'):
-                    self.stats.current_gas_price = recent_blockhash.value.fee_calculator.lamports_per_signature
+                    # Access fee from the response correctly
+                    self.stats.current_gas_price = recent_blockhash.value.blockhash.to_string()
                     if self.on_event:
-                        self.on_event('gas_update', self.stats.current_gas_price)
+                        await self.on_event('gas_update', self.stats.current_gas_price)
             except Exception as e:
                 logger.error(f"Error monitoring gas prices: {str(e)}")
             await asyncio.sleep(5)
 
     async def process_log_message(self, msg):
-        """Process incoming log messages from logsSubscribe."""
         try:
             if "params" in msg and "result" in msg["params"]:
                 result = msg["params"].get("result", {})
@@ -236,7 +220,6 @@ class SnipingBot:
             logger.error(f"Error processing message: {str(e)}")
 
     async def verify_burn_event(self, signature: str):
-        """Verify a burn event by fetching the transaction."""
         try:
             tx = await self.raydium.client.get_transaction(
                 signature,
@@ -248,7 +231,6 @@ class SnipingBot:
             logger.error(f"Error verifying burn: {str(e)}")
 
     async def cleanup(self):
-        """Cleanup resources."""
         if self.session:
             await self.session.close()
         for client in self.raydium.clients:
