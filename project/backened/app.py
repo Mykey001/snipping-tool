@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 import aiohttp
 from dataclasses import dataclass
 from collections import deque
+from solders.signature import Signature  # <-- Add this
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
@@ -187,28 +188,29 @@ async def monitor_wallet_balance(self):
                 logger.error(f"Error monitoring wallet balance: {str(e)}")
             await asyncio.sleep(5)
 async def monitor_gas_prices(self):
-    """Monitor gas prices"""
+    """Monitor gas prices using minimal processing"""
     while True:
         try:
-            # Use the correct RPC method for getting recent blockhash
-            response = await self.raydium.client.rpc.request(
-                "getLatestBlockhash",
-                [{"commitment": "confirmed"}]
-            )
+            # Simple request for recent block hash
+            response = await self.raydium.client.rpc.make_request("getFees", [])
             
-            if hasattr(self, 'stats') and response.get('result'):
-                # Extract the fee from the response
-                fee = response['result']['value']['feeCalculator']['lamportsPerSignature']
-                self.stats.current_gas_price = fee
+            if hasattr(self, 'stats') and response and 'result' in response:
+                # Just store the base fee plus priority fee
+                base_fee = 5000  # Minimum base fee in lamports
+                self.stats.current_gas_price = base_fee + Config.PRIORITY_FEE
                 
-            if self.on_event:
-                await self.on_event('gas_update', self.stats.current_gas_price)
+                if self.on_event:
+                    await self.on_event('gas_update', self.stats.current_gas_price)
+                    
+            logger.info(f"Updated gas price: {self.stats.current_gas_price}")
                     
         except Exception as e:
             logger.error(f"Error monitoring gas prices: {str(e)}")
+            # Set a default value on error
+            if hasattr(self, 'stats'):
+                self.stats.current_gas_price = 5000 + Config.PRIORITY_FEE
         
-            await asyncio.sleep(5)
-
+        await asyncio.sleep(5)
 async def process_log_message(self, msg):
         try:
             if "params" in msg and "result" in msg["params"]:
@@ -228,15 +230,17 @@ async def process_log_message(self, msg):
             logger.error(f"Error processing message: {str(e)}")
 
 async def verify_burn_event(self, signature: str):
-        try:
-            tx = await self.raydium.client.get_transaction(
-                signature,
-                encoding="jsonParsed",
-                max_supported_transaction_version=0
-            )
-            self.stats.add_event(f"Verified burn event: {signature[:8]}...")
-        except Exception as e:
-            logger.error(f"Error verifying burn: {str(e)}")
+    try:
+        # Convert string to Signature object
+        sig_obj = Signature.from_string(signature)  # 👈 Use solders' method
+        tx = await self.raydium.client.get_transaction(
+            sig_obj,  # 👈 Pass the Signature object, NOT the raw string
+            encoding="jsonParsed",
+            max_supported_transaction_version=0
+        )
+        self.stats.add_event(f"Verified burn event: {signature[:8]}...")
+    except Exception as e:
+        logger.error(f"Error verifying burn: {str(e)}")
 
 async def cleanup(self):
         if self.session:

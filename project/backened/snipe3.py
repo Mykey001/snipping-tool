@@ -4,7 +4,8 @@ import json
 import logging
 import datetime
 from typing import Optional, Dict, Callable
-from solana.rpc.async_api import AsyncClient
+import solders.rpc.responses
+
 from solana.rpc.commitment import Confirmed
 from solders.pubkey import Pubkey
 from solders.keypair import Keypair
@@ -15,6 +16,7 @@ from dotenv import load_dotenv
 import aiohttp
 from dataclasses import dataclass
 from collections import deque
+from solana.rpc.async_api import AsyncClient
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
@@ -190,11 +192,10 @@ class SnipingBot:
     async def monitor_gas_prices(self):
         while True:
             try:
-                # Use get_latest_blockhash with proper RPC method
                 recent_blockhash = await self.raydium.client.get_latest_blockhash(Confirmed)
                 if hasattr(self, 'stats'):
-                    # Access fee from the response correctly
-                    self.stats.current_gas_price = recent_blockhash.value.blockhash.to_string()
+                # Convert Hash object to string using str()
+                    self.stats.current_gas_price = str(recent_blockhash.value.blockhash)
                     if self.on_event:
                         await self.on_event('gas_update', self.stats.current_gas_price)
             except Exception as e:

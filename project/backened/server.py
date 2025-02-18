@@ -3,12 +3,37 @@ from aiohttp import web
 import json
 from typing import Set, Dict
 import logging
+from aiohttp import web
+import aiohttp_jinja2
+import jinja2
 
 # Import your SnipingBot class
 from snipe3 import SnipingBot  # Assuming your existing code is in bot.py
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+async def setup_web_server():
+    app = web.Application()
+    
+    # Configure template folder (point to your "templates" directory)
+    aiohttp_jinja2.setup(
+        app,
+        loader=jinja2.FileSystemLoader("./project/backened/templates")
+    )
+    
+    # Add routes
+    app.router.add_get("/", login_handler)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "localhost", 5000)
+    await site.start()
+    logger.info("Server started on http://localhost:5000")
+
+@aiohttp_jinja2.template("login.html")
+async def login_handler(request):
+    return {}  # Return context data if needed
 
 class BotServer:
     def __init__(self):
