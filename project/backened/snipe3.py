@@ -5,7 +5,10 @@ import logging
 import datetime
 from typing import Optional, Dict, Callable
 import solders.rpc.responses
-
+import asyncio
+import backoff  # You'll need to pip install backoff
+import aiohttp.client_exceptions
+import ssl
 from solana.rpc.commitment import Confirmed
 from solders.pubkey import Pubkey
 from solders.keypair import Keypair
@@ -62,12 +65,28 @@ class Config:
             logger.error(f"Error creating wallet: {str(e)}")
             raise
 
+
 class RaydiumClient:
     def __init__(self):
         self.clients = []
+        # Define timeout for AsyncClient separately
+        self.rpc_timeout = 30  # seconds
+        
+        # Define aiohttp timeout for other connections
+        self.http_timeout = aiohttp.ClientTimeout(
+            total=30,
+            connect=10,
+            sock_read=10
+        )
+        
         for url in Config.RPC_URLS:
             try:
-                client = AsyncClient(url, commitment=Config.COMMITMENT)
+                # Use simple float timeout for AsyncClient
+                client = AsyncClient(
+                    url, 
+                    commitment=Config.COMMITMENT,
+                    timeout=self.rpc_timeout  # Using float timeout here
+                )
                 self.clients.append(client)
                 logger.info(f"Initialized RPC client for {url}")
             except Exception as e:
@@ -81,25 +100,57 @@ class RaydiumClient:
         self.on_event = None
         self.wallet: Optional[Wallet] = None
 
+    def _rotate_client(self):
+        """Rotate to the next available RPC client"""
+        self.current_client = (self.current_client + 1) % len(self.clients)
+        logger.info(f"Rotated to RPC client {self.current_client}")
+
+    @backoff.on_exception(
+        backoff.expo,
+        (
+            aiohttp.client_exceptions.ClientError,
+            asyncio.TimeoutError,
+            ssl.SSLError,
+            ConnectionError
+        ),
+        max_tries=5,
+        max_time=30
+    )
+    async def _retry_rpc_call(self, coro):
+        """Wrapper to retry RPC calls with exponential backoff"""
+        try:
+            return await coro
+        except Exception as e:
+            logger.error(f"RPC call failed: {str(e)}")
+            self._rotate_client()  # Try another client on failure
+            raise
+
     async def initialize(self):
-        """Initialize Raydium AMM program."""
+        """Initialize Raydium AMM program with retries."""
         try:
             logger.info("Initializing Raydium AMM program...")
 
             keypair = Config.get_wallet()
             self.wallet = Wallet(keypair)
+            
+            # Create provider with retry mechanism
             provider = Provider(self.clients[0], self.wallet)
 
+            # Load IDL with retry
             idl = Idl.from_json(json.dumps(RAYDIUM_IDL))
             self.program = Program(idl, Config.RAYDIUM_AMM_PROGRAM_ID, provider)
+            
+            # Get latest blockhash with retry
+            blockhash = await self._retry_rpc_call(
+                self.client.get_latest_blockhash(Confirmed)
+            )
+
             logger.info("Raydium AMM program initialized successfully.")
-
-            # Use get_latest_blockhash RPC method instead
-            await self.client.get_latest_blockhash(Confirmed)
-
             return True
+
         except Exception as e:
             logger.error(f"Failed to initialize Raydium client: {str(e)}")
+            # Re-raise the exception after logging
             raise
 
     @property
@@ -107,6 +158,13 @@ class RaydiumClient:
         """Returns the current active AsyncClient."""
         return self.clients[self.current_client]
 
+    async def close(self):
+        """Properly close all client connections"""
+        for client in self.clients:
+            try:
+                await client.close()
+            except Exception as e:
+                logger.error(f"Error closing client: {str(e)}")
 class BotStats:
     def __init__(self):
         self.start_time = datetime.datetime.now()
@@ -236,3 +294,49 @@ class SnipingBot:
             await self.session.close()
         for client in self.raydium.clients:
             await client.close()
+
+
+    async def verify_burn_event(self, signature: str):
+        """Verify burn events with proper signature conversion"""
+        try:
+            # Convert string signature to Solana Signature type
+            tx_signature = Signature.from_string(signature)
+            
+            tx = await self.raydium._retry_rpc_call(
+                self.raydium.client.get_transaction(
+                    tx_signature,  # Use the converted signature
+                    encoding="jsonParsed",
+                    max_supported_transaction_version=0
+                )
+            )
+            self.stats.add_event(f"Verified burn event: {signature[:8]}...")
+            
+        except ValueError as e:
+            logger.error(f"Invalid signature format: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error verifying burn: {str(e)}")
+
+    async def process_log_message(self, msg):
+        """Process WebSocket messages with proper signature handling"""
+        try:
+            if "params" in msg and "result" in msg["params"]:
+                result = msg["params"].get("result", {})
+                if isinstance(result, dict):
+                    value = result.get("value", {})
+                    logs = value.get("logs", [])
+                    
+                    if any("Instruction: Burn" in log for log in logs):
+                        self.stats.burn_events_detected += 1
+                        signature = value.get("signature")
+                        if signature:
+                            # Validate signature format before processing
+                            try:
+                                # Test signature conversion
+                                Signature.from_string(signature)
+                                self.stats.add_event(f"Burn event detected: {signature[:8]}...")
+                                await self.verify_burn_event(signature)
+                            except ValueError:
+                                logger.error(f"Invalid signature format received: {signature}")
+                            
+        except Exception as e:
+            logger.error(f"Error processing message: {str(e)}")
